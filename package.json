@@ -1,18 +1,16 @@
 {
-  "name": "healing-heart-render",
-  "version": "2.0.0",
-  "description": "Stable WhatsApp Pairing Gateway",
+  "name": "healing-heart-pairing",
+  "version": "1.0.0",
+  "description": "WhatsApp Pairing Site",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.7",
+    "@whiskeysockets/baileys": "^6.6.0",
     "express": "^4.18.2",
-    "pino": "^8.19.0",
-    "fs-extra": "^11.1.1"
-  },
-  "engines": {
-    "node": "18.x"
+    "fs-extra": "^11.1.1",
+    "pino": "^8.15.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }
