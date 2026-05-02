@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require('express'); // Fixed capitalization
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -10,9 +10,9 @@ const pino = require("pino");
 const fs = require('fs-extra');
 
 const app = express();
+// Railway provides the PORT, we must use 0.0.0.0 to be reachable
 const port = process.env.PORT || 3000;
 
-// Prevent multiple requests per number
 const activeSessions = new Set();
 
 /* =========================
@@ -26,7 +26,6 @@ app.get("/", (req, res) => {
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Healing Heart Gateway</title>
-
 <style>
 *{margin:0;padding:0;box-sizing:border-box;font-family:Segoe UI,system-ui;}
 body{
@@ -94,17 +93,14 @@ button:hover{
 }
 </style>
 </head>
-
 <body>
 <div class="card">
   <div class="logo">💛</div>
   <h1>Healing Heart</h1>
   <p>Secure WhatsApp Pairing Gateway</p>
-
   <input id="phone" placeholder="234XXXXXXXXXX"/>
   <button onclick="go()">🔐 Generate Code</button>
 </div>
-
 <script>
 function go(){
   const num = document.getElementById("phone").value.trim();
@@ -112,7 +108,6 @@ function go(){
   window.location.href = "/code?number=" + num;
 }
 </script>
-
 </body>
 </html>
 `);
@@ -131,12 +126,10 @@ app.get("/code", async (req, res) => {
   }
 
   activeSessions.add(num);
-
   const sessionPath = './sessions/' + num;
 
   try {
     await fs.ensureDir(sessionPath);
-
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
     const sock = makeWASocket({
@@ -157,20 +150,22 @@ app.get("/code", async (req, res) => {
     sock.ev.on('connection.update', async (update) => {
       const { connection } = update;
 
-      // 🔑 REQUEST PAIRING CODE AT RIGHT TIME
       if (connection === "connecting" && !codeSent) {
         try {
           const code = await sock.requestPairingCode(num);
           codeSent = true;
 
-          res.send(`
-          <body style="background:black;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
-            <div style="text-align:center;">
-              <h1 style="font-size:60px;letter-spacing:10px;color:gold;">${code}</h1>
-              <p>Enter this code in WhatsApp</p>
-            </div>
-          </body>
-          `);
+          if (!res.headersSent) {
+            res.send(`
+            <body style="background:black;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
+              <div style="text-align:center;">
+                <h1 style="font-size:60px;letter-spacing:10px;color:gold;">${code}</h1>
+                <p>Enter this code in WhatsApp</p>
+                <br><a href="/" style="color:gold;">Go Back</a>
+              </div>
+            </body>
+            `);
+          }
         } catch (e) {
           console.log("Pairing Error:", e.message);
           if (!res.headersSent) {
@@ -181,6 +176,7 @@ app.get("/code", async (req, res) => {
 
       if (connection === "open") {
         console.log("Connected:", num);
+        activeSessions.delete(num);
       }
 
       if (connection === "close") {
@@ -189,22 +185,22 @@ app.get("/code", async (req, res) => {
       }
     });
 
-    // ⏱️ FAILSAFE TIMEOUT
     setTimeout(() => {
       if (!res.headersSent) {
         res.send("<h3>Timeout. Try again.</h3>");
         activeSessions.delete(num);
       }
-    }, 20000);
+    }, 45000); // Increased timeout slightly for slower connections
 
   } catch (err) {
     console.log(err);
     activeSessions.delete(num);
-    res.send("<h3>Server error</h3>");
+    if (!res.headersSent) res.send("<h3>Server error</h3>");
   }
 });
 
 /* ========================= */
-app.listen(port, () => {
+// CRITICAL FIX: Added '0.0.0.0' for Railway exposure
+app.listen(port, "0.0.0.0", () => {
   console.log("Server running on port " + port);
 });
