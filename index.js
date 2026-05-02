@@ -1,96 +1,210 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, Browsers, delay, makeCacheableSignalKeyStore } = require("@whiskeysockets/baileys");
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  Browsers,
+  makeCacheableSignalKeyStore
+} = require("@whiskeysockets/baileys");
+
 const pino = require("pino");
 const fs = require('fs-extra');
+
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Prevent multiple requests per number
+const activeSessions = new Set();
+
+/* =========================
+   HOME PAGE (GOLD UI)
+========================= */
 app.get("/", (req, res) => {
-    res.send(`
+  res.send(`
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Healing Heart Gateway</title>
-  <style>
-    * { box-sizing: border-box; font-family: system-ui, sans-serif; }
-    body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #0d1b16; color: #fff; }
-    .card { width: 360px; padding: 30px; border-radius: 25px; background: #162a22; border: 1px solid #1f9d55; text-align: center; }
-    input { width: 100%; padding: 15px; border-radius: 12px; border: 2px solid #1f9d55; outline: none; font-size: 18px; text-align: center; margin-top: 20px; background: #fff; color: #000; }
-    button { width: 100%; margin-top: 15px; padding: 15px; border-radius: 15px; background: #1f9d55; color: #fff; border: none; font-size: 16px; font-weight: bold; cursor: pointer; }
-  </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Healing Heart Gateway</title>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Segoe UI,system-ui;}
+body{
+  height:100vh;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  background:radial-gradient(circle at top,#0f2027,#000);
+  color:#fff;
+}
+.card{
+  width:380px;
+  padding:35px;
+  border-radius:25px;
+  background:rgba(255,255,255,0.05);
+  backdrop-filter:blur(20px);
+  border:1px solid rgba(255,215,0,0.3);
+  box-shadow:0 0 40px rgba(255,215,0,0.15);
+  text-align:center;
+  animation:fadeIn 1s ease;
+}
+.logo{
+  font-size:55px;
+  text-shadow:0 0 15px gold;
+}
+h1{
+  font-size:26px;
+  background:linear-gradient(45deg,gold,#ffd700,#fff2b3);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+p{font-size:13px;color:#aaa;margin-bottom:20px;}
+input{
+  width:100%;
+  padding:15px;
+  border-radius:12px;
+  border:1px solid rgba(255,215,0,0.4);
+  outline:none;
+  font-size:16px;
+  text-align:center;
+  margin-top:10px;
+  background:rgba(255,255,255,0.08);
+  color:#fff;
+}
+button{
+  width:100%;
+  margin-top:18px;
+  padding:15px;
+  border-radius:14px;
+  background:linear-gradient(45deg,gold,#ffcc00);
+  color:#000;
+  border:none;
+  font-size:16px;
+  font-weight:bold;
+  cursor:pointer;
+  transition:0.3s;
+}
+button:hover{
+  transform:translateY(-2px);
+  box-shadow:0 0 20px gold;
+}
+@keyframes fadeIn{
+  from{opacity:0;transform:translateY(20px);}
+  to{opacity:1;transform:translateY(0);}
+}
+</style>
 </head>
+
 <body>
-  <div class="card">
-    <div style="font-size: 50px;">❤️</div>
-    <h1>Healing Heart</h1>
-    <p style="font-size: 12px; color: #888;">WhatsApp-Safe Pairing</p>
-    <input type="text" id="phone" placeholder="e.g. 2348153729342">
-    <button onclick="startPairing()">🔑 Get Secure Code</button>
-  </div>
-  <script>
-    function startPairing() {
-      const num = document.getElementById("phone").value.trim();
-      if (!num) return alert("Please enter your number!");
-      window.location.href = '/code?number=' + num;
-    }
-  </script>
+<div class="card">
+  <div class="logo">💛</div>
+  <h1>Healing Heart</h1>
+  <p>Secure WhatsApp Pairing Gateway</p>
+
+  <input id="phone" placeholder="234XXXXXXXXXX"/>
+  <button onclick="go()">🔐 Generate Code</button>
+</div>
+
+<script>
+function go(){
+  const num = document.getElementById("phone").value.trim();
+  if(!num) return alert("Enter your number");
+  window.location.href = "/code?number=" + num;
+}
+</script>
+
 </body>
 </html>
-    `);
+`);
 });
 
+/* =========================
+   PAIRING ROUTE
+========================= */
 app.get("/code", async (req, res) => {
-    let num = req.query.number.replace(/[^0-9]/g, '');
-    const sessionPath = './sessions/' + num;
+  let num = (req.query.number || "").replace(/[^0-9]/g, '');
 
-    try {
-        if (fs.existsSync(sessionPath)) { fs.removeSync(sessionPath); }
-        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-        
-        const sock = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
-            },
-            printQRInTerminal: false,
-            logger: pino({ level: "silent" }),
-            // COMPATIBILITY FIX: Mimicking a real Mac Desktop to prevent rejection
-            browser: ["Mac OS", "Chrome", "121.0.6167.184"],
-            connectTimeoutMs: 60000,
-            syncFullHistory: false,
-        });
+  if (!num) return res.send("<h3>Invalid number</h3>");
 
-        sock.ev.on('creds.update', saveCreds);
+  if (activeSessions.has(num)) {
+    return res.send("<h3>Session already running. Wait a few seconds...</h3>");
+  }
 
-        // Listen for the Link Success
-        sock.ev.on('connection.update', async (update) => {
-            const { connection } = update;
-            if (connection === 'open') {
-                console.log("Connection Open for " + num);
-                await delay(5000);
-                try {
-                    const credsFile = sessionPath + '/creds.json';
-                    await sock.sendMessage(num + "@s.whatsapp.net", { 
-                        document: fs.readFileSync(credsFile), 
-                        fileName: "creds.json", 
-                        mimetype: "application/json",
-                        caption: "✅ *HEALING HEART SUCCESS*\nYour session file is ready."
-                    });
-                } catch (e) { console.log("Send Error: " + e.message); }
-            }
-        });
+  activeSessions.add(num);
 
-        // WhatsApp requires a stable handshake before asking for the code
-        await delay(10000); 
-        let code = await sock.requestPairingCode(num);
-        
-        res.send("<body style='background:#0d1b16; color:white; font-family:sans-serif; display:flex; justify-content:center; align-items:center; height:100vh;'><div style='text-align:center; background:#162a22; padding:50px; border-radius:20px; border:2px solid #1f9d55;'><h1 style='font-size:60px; letter-spacing:10px;'>" + code + "</h1><p>Enter this on your phone.<br>Link with phone number instead.</p></div></body>");
+  const sessionPath = './sessions/' + num;
 
-    } catch (err) {
-        console.log("Internal Error: " + err.message);
-        res.send("<h2>Connection Busy. Try again in 10 seconds.</h2>");
-    }
+  try {
+    await fs.ensureDir(sessionPath);
+
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+
+    const sock = makeWASocket({
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
+      },
+      logger: pino({ level: "silent" }),
+      browser: Browsers.macOS("Chrome"),
+      printQRInTerminal: false,
+      connectTimeoutMs: 60000
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    let codeSent = false;
+
+    sock.ev.on('connection.update', async (update) => {
+      const { connection } = update;
+
+      // 🔑 REQUEST PAIRING CODE AT RIGHT TIME
+      if (connection === "connecting" && !codeSent) {
+        try {
+          const code = await sock.requestPairingCode(num);
+          codeSent = true;
+
+          res.send(`
+          <body style="background:black;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
+            <div style="text-align:center;">
+              <h1 style="font-size:60px;letter-spacing:10px;color:gold;">${code}</h1>
+              <p>Enter this code in WhatsApp</p>
+            </div>
+          </body>
+          `);
+        } catch (e) {
+          console.log("Pairing Error:", e.message);
+          if (!res.headersSent) {
+            res.send("<h3>Connection busy. Try again.</h3>");
+          }
+        }
+      }
+
+      if (connection === "open") {
+        console.log("Connected:", num);
+      }
+
+      if (connection === "close") {
+        console.log("Closed:", num);
+        activeSessions.delete(num);
+      }
+    });
+
+    // ⏱️ FAILSAFE TIMEOUT
+    setTimeout(() => {
+      if (!res.headersSent) {
+        res.send("<h3>Timeout. Try again.</h3>");
+        activeSessions.delete(num);
+      }
+    }, 20000);
+
+  } catch (err) {
+    console.log(err);
+    activeSessions.delete(num);
+    res.send("<h3>Server error</h3>");
+  }
 });
 
-app.listen(port, () => console.log("Gateway Running on Port " + port));
+/* ========================= */
+app.listen(port, () => {
+  console.log("Server running on port " + port);
+});
