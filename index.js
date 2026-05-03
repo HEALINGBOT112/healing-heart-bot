@@ -54,9 +54,8 @@ app.get("/code", async (req, res) => {
   let num = (req.query.number || "").replace(/[^0-9]/g, '');
   if (!num) return res.send("<h3>Invalid number</h3>");
 
-  // Force clean old sessions if they exist
   if (activeSessions.has(num)) {
-    activeSessions.delete(num);
+    return res.send("<h3>Session already running. Wait a minute.</h3>");
   }
 
   activeSessions.add(num);
@@ -79,50 +78,42 @@ app.get("/code", async (req, res) => {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update;
+      const { connection } = update;
 
       if (connection === "connecting") {
-        console.log("Connecting...");
+         try {
+           const code = await sock.requestPairingCode(num);
+           if (!res.headersSent) {
+             res.send(`
+             <body style="background:black;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
+               <div style="text-align:center;">
+                 <h1 style="font-size:60px;color:gold;letter-spacing:10px;">${code}</h1>
+                 <p>Enter this in WhatsApp</p>
+                 <br><a href="/" style="color:gold;">Go Back</a>
+               </div>
+             </body>
+             `);
+           }
+         } catch (e) {
+           console.log(e);
+         }
       }
 
-      if (update.qr) {
-        // If it sends a QR instead of a code, we handle that here
-      }
-
-      try {
-        if (!res.headersSent && connection !== "close") {
-            const code = await sock.requestPairingCode(num);
-            res.send(\`
-            <body style="background:black;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
-              <div style="text-align:center;">
-                <h1 style="font-size:60px;color:gold;letter-spacing:10px;">\${code}</h1>
-                <p>Enter this in WhatsApp</p>
-                <a href="/" style="color:gold;">Try Again</a>
-              </div>
-            </body>
-            \`);
-            activeSessions.delete(num);
-        }
-      } catch (err) {
-        console.error("Pairing Error:", err);
-      }
-
-      if (connection === "close") {
+      if (connection === "open" || connection === "close") {
         activeSessions.delete(num);
       }
     });
 
-    // Failsafe: if no code is generated in 50 seconds, clear the session
     setTimeout(() => {
       if (!res.headersSent) {
-        res.send("<h3>Timed out. Please refresh and try again.</h3>");
+        res.send("<h3>Request timed out. Try again.</h3>");
         activeSessions.delete(num);
       }
     }, 50000);
 
   } catch (err) {
     activeSessions.delete(num);
-    res.status(500).send("Server Error");
+    res.send("<h3>Error starting session</h3>");
   }
 });
 
